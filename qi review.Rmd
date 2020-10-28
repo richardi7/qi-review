@@ -1,0 +1,394 @@
+---
+title: "R tools for SPC"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r, echo=FALSE, include=FALSE}
+library(qicharts2) 
+library(xmrr) 
+library(spccharter) 
+library(tidyverse)
+library(ggplot2)
+
+```
+
+### Reviewing the libraries for plotting spc charts
+
+Three libraries were identified:
+
+(@) QICharts
+(@) SPCPlotter
+(@) XMRR
+
+The purpose of this review is give an insight into the advantages of each approach.  Not one of them does everything.  
+
+Which should you use? <br>
+The go to solution for SPC is qicharts. It provides all the charts you will need. 
+However it is limited in terms of visualisations as you are limited on the changes you can make in the tool.  
+
+The only area where qicharts is limited is in the identification of shifts and resetting limits. In qicharts a shift is identified as non random variation in the summary and then the plot is manually altered to split the chart into 2 or more parts. Each part will calculate central line and limits.  Anhøj is correct when he gives his reason for not automating shifts: 
+
+> <i>When splitting a chart as in the example above you make a deliberate decision based on your understanding of the process.
+> Some software packages offer automated recalculation of >limits whenever a shift is detected. I find this approach very wrong. 
+> Limits are the voice of the process and recomputing limits without understanding the context, which computers don’t,
+> is like telling someone to shut up, when they are really trying to tell you something important.</i>
+
+This is the right practice where one has a direct controlling influence over the process. However, this is not always the case. In many applications of SPC the aim is to identify special cause variation and shifts across multiple systems. This is where spccharter (and runcharter) become the library of choice. Spccharter automates the identification of shifts based on the run length you specify. The advantage of this can be seen in the example below when comparing the infection rates cross hospitals.  
+
+Things would like to have: 
+
+* Outlier flags - neither qicharts nor spccharter provide flags in the data that identify why the point is an outlier
+  + qicharts identifies the point at a 'signal.outlier=TRUE' 
+
+
+## QIcharts
+
+https://anhoej.github.io/qicharts2/index.html<br>
+This is the most comprehensive library.  It covers: 
+
+* Run charts
+* 11 types of control charts for different types of data:  I, MR, Xbar, S,T, C, U, U', P, P', and G
+* Pareto
+* Funnel
+
+
+### Run charts for number of infections
+
+Clostridium difficile infections
+The cdi dataset contains data on hospital acquired Clostridium difficile infections (CDI) before and after an intervention to reduce the risk of CDI. 
+
+```{r, fig.height=3,fig.width=5}
+qic(month, n,
+    notes    = notes,  #annotate chart
+    data     = cdi,
+    decimals = 0,
+    title    = 'Hospital acquired Clostridium difficile infections',
+    ylab     = 'Count',
+    xlab     = 'Month')
+```
+
+A downward shift in the number of CDIs is clearly visible to the naked eye and is supported by the runs analysis resulting in the centre line being dashed red. The shift seem to begin around the time of the intervention.  This is point 24, the freeze point. 
+
+Even though it is not necessary in this case, we can strengthen the analysis by using the median of the before-intervention period to test for non-random variation in the after period.  
+
+```{r, fig.height=3,fig.width=5}
+qic(month, n,
+    data        = cdi,
+    decimals    = 0,
+    freeze      = 24,
+    part.labels = c('Baseline', 'Intervention'),
+    title       = 'Hospital acquired Clostridium difficile infections',
+    ylab        = 'Count',
+    xlab        = 'Month')
+
+
+```
+
+The median number of CDIs per month in the before period is 19. An unusually long run of 15 data points below the median proves that the CDI rate is reduced.
+
+When a shift in the desired direction is the result of a deliberate change to the process, we may split the chart to compare the numbers before and after the intervention by setting a part to break the data. 
+
+```{r, fig.height=3,fig.width=5}
+qic(month, n,
+    data     = cdi,
+    decimals = 0,
+    part     = 24,  #to split into more parts us c(x,y,z)
+    title    = 'Hospital acquired Clostridium difficile infections',
+    ylab     = 'Count',
+    xlab     = 'Month')
+
+
+```
+
+### C chart for number of infections
+
+Since both periods show only random variation, a control chart may be applied to test for larger transient shifts in data and to establish the natural limits of the current process. The correct chart in this case is the C chart for number of infections.
+
+```{r, fig.height=3,fig.width=5}
+qic(month, n,
+    data  = cdi,
+    chart = 'c',
+    part  = 24,
+    title = 'Hospital acquired Clostridium difficile infections (C chart)',
+    ylab  = 'Count',
+    xlab  = 'Month')
+
+```
+
+The split C chart shows that the CDI rate has dropped from an average of 19 to 7 per month. Furthermore, the 3-sigma limits tell that the current process is predictable and that we in the future should expect between 0 and 15 CDIs per month.
+
+### U chart for infection rate
+
+Until now we have assumed that the area of opportunity, or exposure, is constant, i.e., the number of patients or patient days have not changed significantly over time. When the area of opportunity varies, a U chart (U for unequal area of opportunity) is more appropriate
+
+As qic uses ggplot, it is possible to  extract the plot and alter it manually like any other ggplot2 object. An example is given below of adding a target line.
+
+
+```{r, echo=TRUE, include=FALSE, fig.height=3,fig.width=5}
+
+q<-qic(month, n, days,
+    data     = cdi,
+    chart    = 'u',
+    part     = 24,
+    multiply = 10000, 
+    title    = 'Hospital acquired Clostridium difficile infections (U chart)',
+    ylab     = 'Cases per 10,000 risk days',
+    xlab     = 'Month')
+
+myplot<-plot(q)
+```
+
+```{r, fig.height=3,fig.width=5}
+myplot+
+  geom_hline(aes(yintercept=10), linetype = "dashed", colour="red", size=2)
+
+```
+
+Faceting hospital infections by hospital and infection
+The hospital_infection dataset contains data on hospital acquired bacteremias (BAC), Clostridium difficile infections (CDI), and urinary tract infections (UTI) from six hospitals in the Capital Region of Denmark. See ?hospital_infections for details.
+
+### Two-way faceted U chart by infection and hospital
+
+Non-random variation found by the Anhøj rules is visualised by qic() using a red and dashed centre line.  In the summary they are identifed as runs.signal=1
+
+```{r, fig.height=12,fig.width=12}
+qic(
+  month,
+  n,
+  days,
+  data     = hospital_infections,
+  facets   = infection ~ hospital,
+  chart    = 'u',
+  multiply = 10000,
+  scales   = 'free_y',
+  x.angle  = 45,
+  title    = 'Hospital acquired infections in the Capital Region of Denmark',
+  ylab     = 'Cases per 10,000 risk days',
+  xlab     = 'Month'
+)
+
+u <- qic(
+  month,
+  n,
+  days,
+  data     = hospital_infections,
+  facets   = infection ~ hospital,
+  chart    = 'u',
+  multiply = 10000
+)
+
+summary(u)
+
+```
+
+### P control charts of percent harmed patients
+For proportion (or percent) harmed patients use a P chart. 
+
+```{r, echo=FALSE, fig.height=3,fig.width=5}
+gtt_by_month <- gtt %>%
+  mutate(harmed = harms > 0) %>% 
+  group_by(month) %>% 
+  summarise(harms    = sum(harms),
+            days     = sum(days),
+            n.harmed = sum(harmed),
+            n        = n())
+
+qic(month, n.harmed, n,
+    data      = gtt_by_month,
+    chart     = 'p',
+    y.percent = TRUE,
+    title     = 'Harmed patients (P chart)',
+    ylab      = NULL,
+    xlab      = 'Month')
+
+```
+
+### I and MR charts
+
+I individual measurements charts are also known as X/Xmr charts
+
+Two data points (patients number 45 and 70) are below the lower 3-sigma limit indicating that these patients are “unusually” young, i.e. representative of phenomena that are not normally present in the process.
+
+We should seek the cause(s) of these special causes. We may then chose to eliminate the outliers (point 45 and 70) from the computations of the process centre and 3-sigma limits in order to predict the expected age range of future patients.
+
+```{r, fig.height=3,fig.width=5}
+
+qic(age,
+    data      = tail(cabg, 100), 
+    chart     = 'i',
+   #exclude = c(45, 70),
+    title     = 'Age of the last 100 patients (I chart)',
+    ylab      = 'Years',
+    xlab      = 'Patient #')
+
+i <- qic(age,
+    data      = tail(cabg, 100), 
+    chart     = 'i')
+
+
+data_i<-i$data
+
+```
+
+I charts are often displayed along moving range charts that show the ranges of neighbouring data points.
+
+```{r, fig.height=3,fig.width=5}
+qic(age,
+    data      = tail(cabg, 100), 
+    chart     = 'mr',
+    title     = 'Age of the last 100 patients (MR chart)',
+    ylab      = 'Years',
+    xlab      = 'Patient #')
+
+mr <- qic(age,
+    data      = tail(cabg, 100), 
+    chart     = 'mr')
+data_mr<-mr$data
+```
+
+The MR chart identifies three unusually large ranges, which are clearly produced by the two unusually young patients also found in the I chart.
+
+Again the output does not specify why a point is an outlier, here for the i-chart
+
+```{r}
+outliers<-filter(data_i, sigma.signal==TRUE)
+print(outliers)
+
+outliers<-filter(data_mr, sigma.signal==TRUE)
+print(outliers)
+
+```
+
+
+## SPCCHARTER
+
+https://github.com/johnmackintosh/spccharter
+It covers 3 types of control charts for different types of data: C, U,P
+Aim is to focus on the shifts that occur, rather than the other outlier rules. The points where a sustained run above the central line is observed are highlighted.  
+
+You can set your own values for the run length and initial baseline. In these example they are set using using two variables: 
+
+* my_run_length
+* my_initial
+
+### P control charts of percent harmed patients
+
+```{r, fig.height=3,fig.width=5}
+
+cdi$org="A"
+gtt_by_month$org="A"
+my_run_length=5
+my_initial=5
+p<-spccharter(gtt_by_month, numerator = n.harmed,denominator=n, initial_rows = my_initial, run_length= my_run_length, 
+               datecol = month, by=org,
+               plot_type = 'p', direction = "both")
+print(p$spcchart)
+```
+
+### C chart for number of infections
+
+```{r, fig.height=12,fig.width=12}
+my_run_length = 8
+my_initial = 15
+c <-
+  spccharter(
+    hospital_infections,
+    numerator = n,
+    initial_rows = my_initial,
+    run_length = my_run_length,
+    datecol = month,
+    by = c(`hospital`, `infection`),
+    facet_scale = "free_y",
+    facet_cols = 4,
+    plot_type = 'c',
+    direction = "both",
+    chart_title = 'Hospital acquired infections in the Capital Region of Denmark'
+  )
+print(c$spcchart)
+```
+
+### U chart for infection rate
+
+Until now we have assumed that the area of opportunity, or exposure, is constant, i.e., the number of patients or patient days have not changed significantly over time. When the area of opportunity varies, a U chart (U for unequal area of opportunity) is more appropriate.
+
+```{r, fig.height=12,fig.width=12}
+my_run_length=8
+my_initial=15
+
+u <-
+  spccharter(
+    hospital_infections,
+    numerator = n,
+    denominator = days,
+    initial_rows = my_initial,
+    run_length = my_run_length,
+    datecol = month,
+    by = c(`hospital`, `infection`),
+    multiplier = 10000,
+    plot_type = 'u',
+    direction = "both",
+    output = "both"
+  )
+u_c <- plot(u$spcchart)
+```
+
+
+SPCcharter provides the warning (2sigma) and control limits (3sigma) from which the rules could be calculated. 
+
+```{r}
+
+data_u <- u_c$data
+print(data_u)
+```
+
+
+As spccharter uses ggplot, it is possible to  extract the plot and alter it manually like any other ggplot2 object. An example is given below of adding a target line.
+
+```{r, fig.height=12,fig.width=12}
+u_c + facet_grid(vars(infection), vars(hospital), scales = "free") +
+  geom_hline(
+    aes(yintercept = 0.001),
+    linetype = "dashed",
+    colour = "red",
+    size = 1
+  )
+```
+
+
+## XMRR
+
+There is an error in the XMRR library "Error: Discrete value supplied to continuous scale", even when running the example from their vignette 
+(https://rdrr.io/cran/xmrr/f/vignettes/xmR.Rmd)
+
+```{r}
+
+# Measure <- round(runif(12, min = 0.50, max = 0.66)*100, 0)
+# Measure <- c(Measure, round(runif(6, min = 0.70, max = .85)*100, 0))
+# Time <- c(2000:2017)
+# example_data <- data.frame(Time, Measure)
+# knitr::kable(example_data, format = "markdown", align = 'c')
+# 
+# xmr_data <- xmr(example_data,  "Measure",
+#                 recalc = T,
+#                 interval = 5,
+#                 shortrun = c(3,4),
+#                 longrun = c(5,8))
+# 
+# xmr_chart(xmr_data,
+#           time = "Time",
+#           measure = "Measure",
+#           line_width = 0.75, text_size = 12, point_size = 2.5)
+# 
+# example_data %>%
+#   xmr("Measure", recalc = T) %>%
+#   xmr_chart("Time", "Measure")
+# 
+# hospital_infections<-transform(hospital_infections, Measure=as.numeric(n))
+# hospital_infections %>%
+#   xmr("Measure", recalc = T) %>%
+#   xmr_chart("Order", "Measure")
+
+```
